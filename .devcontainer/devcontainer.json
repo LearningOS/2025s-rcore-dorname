@@ -1,0 +1,23 @@
+{
+    "name": "rCore Development",
+    "dockerFile": "Dockerfile",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "ms-vscode.cpptools",
+                "ms-azuretools.vscode-docker"
+            ],
+            "settings": {
+                "rust-analyzer.checkOnSave.command": "clippy",
+                "rust-analyzer.cargo.features": "all"
+            }
+        }
+    },
+    "remoteUser": "root",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "workspaceFolder": "/workspace",
+    "postCreateCommand": "rustup default nightly && rustup target add riscv64gc-unknown-none-elf",
+    "runArgs": ["-e","HTTP_PROXY=http://192.168.20.143:7890","-e","HTTPS_PROXY=http://192.168.20.143:7890"]
+
+} 
