@@ -19,3 +19,5 @@ pushall.sh
 ci-user/
 os/vendor/
 user/
+# SpecStory explanation file
+.specstory/.what-is-this.md
