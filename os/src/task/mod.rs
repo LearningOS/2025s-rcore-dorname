@@ -16,6 +16,7 @@ mod task;
 
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
+use crate::syscall::SyscallStats;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -46,6 +47,8 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    /// syscall stats
+    syscall_stats: Vec<SyscallStats>,
 }
 
 lazy_static! {
@@ -55,8 +58,10 @@ lazy_static! {
         let num_app = get_num_app();
         println!("num_app = {}", num_app);
         let mut tasks: Vec<TaskControlBlock> = Vec::new();
+        let mut syscall_stats: Vec<SyscallStats> = Vec::new();
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
+            syscall_stats.push(SyscallStats::new(i));
         }
         TaskManager {
             num_app,
@@ -64,6 +69,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_stats,
                 })
             },
         }
@@ -153,6 +159,15 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+    fn get_current_task(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        inner.current_task
+    }
+}
+
+/// 获取当前任务
+pub fn get_current_task() -> usize {
+    TASK_MANAGER.get_current_task()
 }
 
 /// Run the first task in task list.
@@ -201,4 +216,22 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// 获取当前任务的syscall统计
+pub fn get_current_task_syscall_stats() -> Vec<SyscallStats> {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    inner.syscall_stats.clone()
+}
+
+/// syscall递增函数
+pub fn increase_syscall_times(task_id: usize, id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    inner.syscall_stats[task_id].increase(id);
+}
+
+/// 获取syscall统计
+pub fn get_syscall_times(task_id: usize, id: usize) -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    inner.syscall_stats.iter().find(|item| item.task_id == task_id).unwrap().get_syscall_times(id)
 }
