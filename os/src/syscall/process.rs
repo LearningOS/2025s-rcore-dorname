@@ -2,7 +2,7 @@
 use crate::config::PAGE_SIZE;
 use crate::task::{change_program_brk, exit_current_and_run_next, get_current_task, get_syscall_times, suspend_current_and_run_next};
 use crate::task::current_user_token;
-use crate::mm::{frame_alloc, PageTable, VirtAddr, VirtPageNum, PTEFlags};
+use crate::mm::{frame_alloc, PageTable, VirtPageNum, PTEFlags};
 use crate::timer::get_time_us;
 
 #[repr(C)]
@@ -44,9 +44,10 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     //2、获取虚拟地址
     let ts_va = ts as usize;
     //3、根据用户token读取页表
-    let pgae_table = PageTable::from_token(token);
+    let page_table = PageTable::from_token(token);
     //4、检查虚拟地址是否在当前用户空间可写
-    if let Some(pte)  = pgae_table.translate(VirtAddr::from(ts_va).into())  {
+    let vpn = VirtPageNum::from(ts_va / PAGE_SIZE);
+    if let Some(pte) = page_table.translate(vpn) {
         // 5、检查页表项是否具有用户权限和写权限
         if pte.readable() && pte.writable() {
             //6、将时间写入TimeVal结构体中
@@ -70,29 +71,45 @@ pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
     //2、获取虚拟地址
     let trace_request_va = trace_request as usize;
     //3、根据用户token读取页表
-    let pgae_table = PageTable::from_token(token);
+    let page_table = PageTable::from_token(token);
+    
     //4、检查虚拟地址是否在当前用户空间可写
-    if let Some(pte)  = pgae_table.translate(VirtAddr::from(trace_request_va).into())  {
+    let vpn = VirtPageNum::from(trace_request_va / PAGE_SIZE);
+    if let Some(pte) = page_table.translate(vpn) {
         // 5、检查页表项是否具有用户权限和写权限
         if pte.readable() && pte.writable() {
             //6、根据trace_request的值进行不同的操作
             match trace_request {
                 0 => {
-                    //7、读取任务id地址住址的值
-                    let addr = unsafe {
-                        *(id as *const u8)
-                    };
-                   return addr as isize;
+                    //7、读取任务id地址处的值
+                    // 检查id地址是否有效
+                    let id_vpn = VirtPageNum::from(id / PAGE_SIZE);
+                    if let Some(id_pte) = page_table.translate(id_vpn) {
+                        if id_pte.readable() {
+                            let addr = unsafe {
+                                *(id as *const u8)
+                            };
+                            return addr as isize;
+                        }
+                    }
+                    return -1;
                 },
                 1 => {
                     //8、写入任务id地址处的值
-                    unsafe {
-                        *(id as *mut u8) = data as u8
-                    };
-                    return 0;
+                    // 检查id地址是否有效
+                    let id_vpn = VirtPageNum::from(id / PAGE_SIZE);
+                    if let Some(id_pte) = page_table.translate(id_vpn) {
+                        if id_pte.writable() {
+                            unsafe {
+                                *(id as *mut u8) = data as u8
+                            };
+                            return 0;
+                        }
+                    }
+                    return -1;
                 },
                 2 => {
-                   return get_syscall_times(get_current_task(),id) as isize;
+                    return get_syscall_times(get_current_task(), id) as isize;
                 }
                 _ => {
                     return -1;
