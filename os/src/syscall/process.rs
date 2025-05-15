@@ -144,9 +144,9 @@ pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
 
 /// 系统调用：mmap
 pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
-    trace!("kernel: sys_mmap: start={:#x}, len={:#x}, prot={:#x}", start, len, prot);
-    
-    // 1. 检查参数合法性
+    trace!("kernel: sys_mmap: start={:#x}, len={:#x}, prot={:#x}", start, len, prot);    
+
+    // 1. 检查起始地址是否按页对齐合法性
     if start % PAGE_SIZE != 0 {
         trace!("kernel: sys_mmap: start not aligned");
         return -1;  // start 没有按页对齐
@@ -157,19 +157,13 @@ pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
         trace!("kernel: sys_mmap: invalid prot flags (other bits not zero)");
         return -1;  // prot 其余位必须为0
     }
-    
     if (prot & 0x7) == 0 {
         trace!("kernel: sys_mmap: invalid prot flags (no permissions)");
         return -1;  // 这样的内存无意义
     }
     
-    // 3. 如果 len 为 0，直接返回成功
-    if len == 0 {
-        trace!("kernel: sys_mmap: len is 0");
-        return 0;
-    }
     
-    // 4. 构建页表项标志
+    // 3. 构建页表项标志
     let mut flags = PTEFlags::V | PTEFlags::U;  // 有效位和用户态访问位
     if (prot & 0x1) != 0 {
         flags |= PTEFlags::R;  // 可读
@@ -181,23 +175,29 @@ pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
         flags |= PTEFlags::X;  // 可执行
     }
     
-    // 5. 计算页数（向上取整）
+    // 4. 计算需要映射的页数（向上取整）
     let page_count = (len + PAGE_SIZE - 1) / PAGE_SIZE;
     trace!("kernel: sys_mmap: page_count={}", page_count);
     
-    // 6. 获取当前任务的页表
+    // 5. 获取当前任务的页表
     let token = current_user_token();
     let mut page_table = PageTable::from_token(token);
     
-    // 7. 检查目标虚存区间是否已被映射
+    // 6. 检查目标虚存区间是否已被映射
+    let mut overlap = false;
     for i in 0..page_count {
         let vpn = VirtPageNum::from(start / PAGE_SIZE + i);
         if let Some(pte) = page_table.translate(vpn) {
             if pte.is_valid() {
                 trace!("kernel: sys_mmap: VPN={:#x} already mapped", vpn.0);
-                return -1;  // 页面已被映射
+                overlap = true;
+                break;
             }
         }
+    }
+    
+    if overlap {
+        return -1;
     }
     
     // 8. 分配物理页并建立映射
@@ -208,11 +208,11 @@ pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
             page_table.map(vpn, frame.ppn, flags);
         } else {
             trace!("kernel: sys_mmap: no more physical frames available");
-            // 物理内存不足，需要回滚已分配的页
-            for j in 0..i {
-                let vpn = VirtPageNum::from(start / PAGE_SIZE + j);
-                page_table.unmap(vpn);
-            }
+            // 物理内存不足，需要回滚已分配的页 实验不需要
+            // for j in 0..i {
+            //     let vpn = VirtPageNum::from(start / PAGE_SIZE + j);
+            //     page_table.unmap(vpn);
+            // }
             return -1;
         }
     }
@@ -231,12 +231,6 @@ pub fn sys_munmap(start: usize, len: usize) -> isize {
         return -1;  // start 没有按页对齐
     }
     
-    // 2. 如果 len 为 0，直接返回成功
-    if len == 0 {
-        trace!("kernel: sys_munmap: len is 0");
-        return 0;
-    }
-    
     // 3. 计算页数（向上取整）
     let page_count = (len + PAGE_SIZE - 1) / PAGE_SIZE;
     trace!("kernel: sys_munmap: page_count={}", page_count);
@@ -245,28 +239,22 @@ pub fn sys_munmap(start: usize, len: usize) -> isize {
     let token = current_user_token();
     let mut page_table = PageTable::from_token(token);
     
-    // 5. 检查所有页面是否都已被映射
+    // 5. 解除映射
     for i in 0..page_count {
         let vpn = VirtPageNum::from(start / PAGE_SIZE + i);
-        match page_table.translate(vpn) {
-            Some(pte) => {
-                if !pte.is_valid() {
-                    trace!("kernel: sys_munmap: VPN={:#x} is not valid", vpn.0);
-                    return -1;  // 页面未映射
-                }
-            }
-            None => {
-                trace!("kernel: sys_munmap: VPN={:#x} not found", vpn.0);
-                return -1;  // 页面未映射
+        if let Some(pte) = page_table.translate(vpn) {
+           
+            if pte.is_valid() {
+                println!("vaild i: {}, pte: {:?}", i, pte);
+                trace!("kernel: sys_munmap: unmapping VPN={:#x}", vpn.0);
+                page_table.unmap(vpn);
+            }else {
+                println!("invalid i: {}, pte: {:?}", i, pte);
+                println!("start: {:x}, len: {}, page_count: {}", start, len, page_count);
+                // 存在有一个无效映射 返回-1
+                return -1;
             }
         }
-    }
-    
-    // 6. 解除映射
-    for i in 0..page_count {
-        let vpn = VirtPageNum::from(start / PAGE_SIZE + i);
-        trace!("kernel: sys_munmap: unmapping VPN={:#x}", vpn.0);
-        page_table.unmap(vpn);
     }
     
     trace!("kernel: sys_munmap: success");
@@ -282,4 +270,5 @@ pub fn sys_sbrk(size: i32) -> isize {
         -1
     }
 }
+
 
